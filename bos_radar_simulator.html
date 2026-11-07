@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOS Radar — Logan Airport Radar Simulator</title>
+<style>
+  :root { color-scheme: dark; --green:#62ff91; --dim:#1e7d49; --bg:#020a06; }
+  * { box-sizing:border-box }
+  body { margin:0; background:#020604; color:#c8ffd7; font:14px/1.4 "Consolas","Courier New",monospace; }
+  header { display:flex; gap:16px; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid #1c6139; background:#06130b; }
+  h1 { margin:0; color:#8bffad; font-size:clamp(18px,3vw,27px); letter-spacing:2px; }
+  .sub { color:#6ca77e; font-size:11px; letter-spacing:1px; }
+  .status { color:#8bffad; border:1px solid #287448; padding:5px 9px; border-radius:3px; white-space:nowrap; }
+  main { max-width:1400px; margin:auto; padding:16px; display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; }
+  .panel { border:1px solid #1e633a; background:#041009; box-shadow:0 0 18px #061b0d inset; }
+  .panelhead { display:flex; justify-content:space-between; gap:10px; padding:10px 13px; color:#8bffad; border-bottom:1px solid #17482b; font-size:12px; letter-spacing:1px; }
+  #scopeWrap { position:relative; padding:10px; }
+  canvas { display:block; width:100%; aspect-ratio:1/1; max-height:78vh; background:#010704; }
+  .legend { padding:9px 13px; color:#7ebc90; border-top:1px solid #17482b; font-size:11px; display:flex; flex-wrap:wrap; gap:15px; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#a4ffbd; margin-right:5px; box-shadow:0 0 7px #62ff91; }
+  aside { display:flex; flex-direction:column; gap:16px; }
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:12px; }
+  .stat { background:#07190d; padding:10px; border:1px solid #17482b; }
+  .stat strong { display:block; color:#a4ffbd; font-size:21px; }
+  .stat span { color:#6ca77e; font-size:10px; letter-spacing:1px; }
+  #aircraftList { padding:7px; max-height:260px; overflow:auto; }
+  .aircraft { width:100%; text-align:left; display:block; background:#06150b; color:#aaffbd; border:1px solid #17482b; padding:9px; margin:4px 0; font:inherit; cursor:pointer; }
+  .aircraft:hover,.aircraft.selected { border-color:#9cffb2; background:#0b2815; }
+  .aircraft small { display:block; color:#6ca77e; margin-top:3px; }
+  #detail { padding:13px; min-height:150px; color:#83b992; }
+  #detail strong { color:#a4ffbd; }
+  .note { padding:12px; color:#78a987; font-size:11px; line-height:1.55; }
+  button#reset { background:#0a2111; color:#aaffbd; border:1px solid #287448; padding:6px 10px; cursor:pointer; font:inherit; }
+  footer { color:#527c5d; text-align:center; padding:0 16px 18px; font-size:10px; }
+  @media(max-width:850px){ main{grid-template-columns:1fr} aside{display:grid;grid-template-columns:1fr 1fr} aside .panel:last-child{grid-column:1/-1} }
+  @media(max-width:560px){ header{align-items:flex-start;flex-direction:column} aside{display:flex} }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>BOS // RADAR SCOPE</h1><div class="sub">BOSTON LOGAN INTERNATIONAL AIRPORT · 20 NM DISPLAY</div></div>
+  <div class="status">● SIMULATION MODE</div>
+</header>
+<main>
+  <section class="panel">
+    <div class="panelhead"><span>PRIMARY RADAR DISPLAY</span><span id="clock">LOCAL TIME --:--:--</span></div>
+    <div id="scopeWrap"><canvas id="radar" aria-label="Animated simulated radar scope"></canvas></div>
+    <div class="legend"><span><i class="dot"></i>SIMULATED AIRCRAFT</span><span>━━ RUNWAY</span><span>RANGE RINGS: 5 / 10 / 15 / 20 NM</span><span>CLICK A TARGET FOR DETAILS</span></div>
+  </section>
+  <aside>
+    <section class="panel">
+      <div class="panelhead"><span>DISPLAY SUMMARY</span><button id="reset">RESET</button></div>
+      <div class="stats">
+        <div class="stat"><strong id="count">0</strong><span>TRACKS</span></div>
+        <div class="stat"><strong>20 NM</strong><span>RANGE</span></div>
+        <div class="stat"><strong>4</strong><span>RUNWAYS</span></div>
+        <div class="stat"><strong>LIVE</strong><span>ANIMATION</span></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panelhead"><span>SIMULATED TARGETS</span><span>SELECT</span></div>
+      <div id="aircraftList"></div>
+    </section>
+    <section class="panel">
+      <div class="panelhead"><span>FLIGHT DATA BLOCK</span><span id="selectedTag">NO TARGET</span></div>
+      <div id="detail">Select one of the simulated aircraft on the radar or in the target list to view its flight data.</div>
+    </section>
+    <section class="panel note">
+      <strong>RUNWAY DIAGRAM (SCHEMATIC)</strong><br>
+      04L / 22R · 04R / 22L<br>
+      09 / 27 · 14 / 32<br><br>
+      Runway positions and orientations are a simplified visual reference, not a navigation chart. This display is not for operational aviation use.
+    </section>
+  </aside>
+</main>
+<footer>EDUCATIONAL RADAR-STYLE SIMULATOR · ALL AIRCRAFT POSITIONS AND FLIGHT DATA ARE FICTIONAL · NOT FOR NAVIGATION OR FLIGHT OPERATIONS</footer>
+<script>
+(() => {
+  const canvas = document.getElementById('radar');
+  const ctx = canvas.getContext('2d');
+  const list = document.getElementById('aircraftList');
+  const detail = document.getElementById('detail');
+  const count = document.getElementById('count');
+  const selectedTag = document.getElementById('selectedTag');
+  const TAU = Math.PI * 2;
+  let w, h, cx, cy, radius, sweep = 0, last = 0, selected = null;
+  const names = ['JETBLUE 418','DAL 1267','UAL 232','SWA 904','AAL 771','FFT 208','UPS 61','JBU 1520'];
+  const aircraft = names.map((callsign,i) => ({
+    callsign, x: Math.cos(i*TAU/names.length+0.3)*(0.34+(i%3)*0.13),
+    y: Math.sin(i*TAU/names.length+0.3)*(0.34+(i%3)*0.13),
+    heading: (i*43+68)%360, speed: 180+(i*29)%190,
+    altitude: 4000+(i*3700)%29000, phase:i*1.7
+  }));
+  const runways = [
+    {label:'04L / 22R', angle:44, length:.74},
+    {label:'04R / 22L', angle:44, length:.58},
+    {label:'09 / 27', angle:90, length:.53},
+    {label:'14 / 32', angle:140, length:.42}
+  ];
+  function resize(){
+    const rect=canvas.getBoundingClientRect(), dpr=Math.min(devicePixelRatio||1,2);
+    w=rect.width; h=rect.width; canvas.width=w*dpr; canvas.height=h*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0); cx=w/2; cy=h/2; radius=Math.min(w,h)*.43;
+  }
+  function line(x1,y1,x2,y2,color,width=1){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();}
+  function drawRunways(){
+    ctx.save(); ctx.translate(cx,cy);
+    runways.forEach((r,i)=>{
+      const a=r.angle*Math.PI/180, len=radius*r.length, dx=Math.cos(a)*len/2, dy=Math.sin(a)*len/2;
+      line(-dx,-dy,dx,dy,'#a0c7a8',i<2?5:4);
+      line(-dx,-dy,dx,dy,'#244b31',1);
+      ctx.fillStyle='#b9e8c2'; ctx.font='10px Consolas'; ctx.textAlign='center';
+      ctx.fillText(r.label,Math.cos(a)*(len/2+20),Math.sin(a)*(len/2+20));
+    });
+    ctx.fillStyle='#a4ffbd';ctx.font='bold 11px Consolas';ctx.textAlign='center';ctx.fillText('BOS',0,-9);
+    ctx.restore();
+  }
+  function drawGrid(){
+    ctx.clearRect(0,0,w,h); ctx.fillStyle='#010704';ctx.fillRect(0,0,w,h);
+    ctx.strokeStyle='#17482b';ctx.lineWidth=1;
+    for(let i=1;i<=4;i++){ctx.beginPath();ctx.arc(cx,cy,radius*i/4,0,TAU);ctx.stroke();}
+    line(cx-radius,cy,cx+radius,cy,'#123b24');line(cx,cy-radius,cx,cy+radius,'#123b24');
+    ctx.fillStyle='#62a878';ctx.font='10px Consolas';ctx.textAlign='left';
+    ['5 NM','10 NM','15 NM','20 NM'].forEach((t,i)=>ctx.fillText(t,cx+radius*(i+1)/4+4,cy-4));
+    for(let a=0;a<360;a+=30){
+      const rad=a*Math.PI/180, x=cx+Math.sin(rad)*radius, y=cy-Math.cos(rad)*radius;
+      ctx.fillStyle='#78b88b';ctx.textAlign='center';ctx.fillText(String(a/10).padStart(2,'0'),cx+Math.sin(rad)*(radius+13),cy-Math.cos(rad)*(radius+13)+3);
+      line(cx+Math.sin(rad)*(radius-4),cy-Math.cos(rad)*(radius-4),x,y,'#245c36');
+    }
+    drawRunways();
+  }
+  function drawSweep(dt){
+    sweep=(sweep+dt*.00055)%TAU;
+    const a=sweep;
+    ctx.save();ctx.translate(cx,cy);
+    const grad=ctx.createRadialGradient(0,0,0,0,0,radius);
+    grad.addColorStop(0,'rgba(49,255,112,0.02)');grad.addColorStop(1,'rgba(49,255,112,0)');
+    ctx.fillStyle=grad;ctx.beginPath();ctx.arc(0,0,radius,0,TAU);ctx.fill();
+    ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,radius,a-.22,a);ctx.closePath();
+    const wedge=ctx.createRadialGradient(0,0,0,0,0,radius);
+    wedge.addColorStop(0,'rgba(75,255,130,0.02)');wedge.addColorStop(1,'rgba(75,255,130,0.18)');
+    ctx.fillStyle=wedge;ctx.fill();
+    line(0,0,Math.sin(a)*radius,-Math.cos(a)*radius,'#63ff91',2);
+    ctx.restore();
+  }
+  function updatePositions(dt){
+    aircraft.forEach(p=>{
+      const rad=p.heading*Math.PI/180;
+      p.x+=Math.sin(rad)*dt*.000012*(p.speed/250);
+      p.y-=Math.cos(rad)*dt*.000012*(p.speed/250);
+      if(Math.hypot(p.x,p.y)>.91){p.heading=(p.heading+155+Math.random()*50)%360;p.x*=.83;p.y*=.83;}
+      p.heading=(p.heading+Math.sin(performance.now()/5000+p.phase)*.015+360)%360;
+    });
+  }
+  function drawTargets(){
+    aircraft.forEach(p=>{
+      const x=cx+p.x*radius,y=cy+p.y*radius;
+      ctx.save();ctx.translate(x,y);
+      ctx.fillStyle='#b8ffc8';ctx.shadowColor='#62ff91';ctx.shadowBlur=selected===p?16:8;
+      ctx.beginPath();ctx.arc(0,0,selected===p?4.5:3.2,0,TAU);ctx.fill();ctx.shadowBlur=0;
+      const a=p.heading*Math.PI/180;line(0,0,Math.sin(a)*15,-Math.cos(a)*15,'#9bffb5',1.4);
+      ctx.fillStyle='#a4ffbd';ctx.font='10px Consolas';ctx.textAlign='left';ctx.fillText(p.callsign,8,-7);
+      ctx.restore();
+    });
+  }
+  function renderList(){
+    count.textContent=aircraft.length;
+    list.innerHTML='';
+    aircraft.forEach(p=>{
+      const b=document.createElement('button');b.className='aircraft'+(selected===p?' selected':'');
+      b.innerHTML=`${p.callsign}<small>${Math.round(p.altitude/100)*100} FT · ${p.speed} KT · HDG ${Math.round(p.heading)}°</small>`;
+      b.addEventListener('click',()=>select(p));list.appendChild(b);
+    });
+  }
+  function select(p){
+    selected=p;selectedTag.textContent=p.callsign;
+    detail.innerHTML=`<strong>${p.callsign}</strong><br><br>ALTITUDE: <strong>${(Math.round(p.altitude/100)*100).toLocaleString()} FT</strong><br>GROUND SPEED: <strong>${p.speed} KT</strong><br>HEADING: <strong>${Math.round(p.heading)}°</strong><br>RANGE: <strong>${(Math.hypot(p.x,p.y)*20).toFixed(1)} NM</strong><br><span style="color:#5d956e">SIMULATED FLIGHT DATA</span>`;
+    renderList();
+  }
+  function frame(t){
+    const dt=Math.min(t-last||16,50);last=t;
+    updatePositions(dt);drawGrid();drawSweep(dt);drawTargets();
+    document.getElementById('clock').textContent='LOCAL TIME '+new Date().toLocaleTimeString();
+    requestAnimationFrame(frame);
+  }
+  canvas.addEventListener('click',e=>{
+    const rect=canvas.getBoundingClientRect(), x=e.clientX-rect.left,y=e.clientY-rect.top;
+    let nearest=null,dist=18;
+    aircraft.forEach(p=>{const d=Math.hypot(x-(cx+p.x*radius),y-(cy+p.y*radius));if(d<dist){dist=d;nearest=p;}});
+    if(nearest)select(nearest);
+  });
+  document.getElementById('reset').addEventListener('click',()=>{
+    aircraft.forEach((p,i)=>{p.x=Math.cos(i*TAU/aircraft.length+.3)*(.34+(i%3)*.13);p.y=Math.sin(i*TAU/aircraft.length+.3)*(.34+(i%3)*.13);});
+    selected=null;selectedTag.textContent='NO TARGET';detail.textContent='Select one of the simulated aircraft on the radar or in the target list to view its flight data.';renderList();
+  });
+  window.addEventListener('resize',resize);
+  resize();renderList();requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
